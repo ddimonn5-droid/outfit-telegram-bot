@@ -1,13 +1,12 @@
-# Добавьте это в САМОЕ начало файла
 import sys
 import os
+import asyncio
 
 # Добавляем текущую директорию в путь Python ПЕРВОЙ
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, current_dir)
 
 # Теперь импортируем остальные модули
-import asyncio
 from telegram import Update, InputMediaPhoto
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from telegram.error import TelegramError
@@ -21,7 +20,7 @@ if not TOKEN:
     print("📝 Установите переменную окружения TELEGRAM_BOT_TOKEN")
     sys.exit(1)
 
-# База аутфитов с улучшенной структурой
+# База аутфитов
 OUTFITS = {
     "кэжуал": [
         {
@@ -166,9 +165,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Unexpected error: {e}")
 
 # Обработчик ошибок
-async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     print(f"Error occurred: {context.error}")
-    if update and update.message:
+    if isinstance(update, Update) and update.message:
         await update.message.reply_text(
             "⚠️ Произошла ошибка. Пожалуйста, попробуйте еще раз."
         )
@@ -176,23 +175,20 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Основная функция
 def main():
     try:
-        # Создаем приложение
+        # НОВЫЙ СИНТАКСИС - только Application
         application = Application.builder().token(TOKEN).build()
 
-        # Добавляем обработчики команд
+        # Добавляем обработчики
         application.add_handler(CommandHandler("start", start))
         application.add_handler(CommandHandler("help", help_command))
         application.add_handler(CommandHandler("styles", list_styles))
-        
-        # Добавляем обработчик текстовых сообщений
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-        
-        # Добавляем обработчик ошибок
         application.add_error_handler(error_handler)
 
         print("🤖 Бот запускается...")
         print("📊 Доступные стили:", list(OUTFITS.keys()))
         print("✅ Бот готов к работе!")
+        print("🚀 Используется новая версия библиотеки (20.7)")
         
         # Запускаем бота
         application.run_polling(drop_pending_updates=True)
