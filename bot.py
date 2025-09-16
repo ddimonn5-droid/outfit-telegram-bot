@@ -2,7 +2,7 @@ import asyncio
 import os
 import sys
 from telegram import Update, InputMediaPhoto
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import Updater, CommandHandler, MessageHandler, filters, CallbackContext
 from telegram.error import TelegramError
 
 # Токен из переменных окружения
@@ -65,7 +65,7 @@ OUTFITS = {
 }
 
 # Команда /start
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def start(update: Update, context: CallbackContext):
     welcome_text = (
         "👕 *Добро пожаловать в бот для подбора аутфитов!* 👖\n\n"
         "Я помогу вам подобрать стильный комплект одежды.\n\n"
@@ -80,10 +80,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "И я покажу вам подходящий комплект одежды!"
     )
     
-    await update.message.reply_text(welcome_text, parse_mode='Markdown')
+    update.message.reply_text(welcome_text, parse_mode='Markdown')
 
 # Команда /help
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def help_command(update: Update, context: CallbackContext):
     help_text = (
         "🤖 *Как пользоваться ботом:*\n\n"
         "1. Напишите название стиля (например: 'кэжуал')\n"
@@ -96,27 +96,27 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🎯 *Доступные стили:* " + ", ".join(f"'{key}'" for key in OUTFITS.keys())
     )
     
-    await update.message.reply_text(help_text, parse_mode='Markdown')
+    update.message.reply_text(help_text, parse_mode='Markdown')
 
 # Команда /styles
-async def list_styles(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def list_styles(update: Update, context: CallbackContext):
     styles_text = "🎨 *Доступные стили одежды:*\n\n"
     for style in OUTFITS.keys():
         styles_text += f"• {style.capitalize()} - {len(OUTFITS[style])} элементов\n"
     
     styles_text += "\n📝 Напишите название стиля, чтобы увидеть аутфит!"
     
-    await update.message.reply_text(styles_text, parse_mode='Markdown')
+    update.message.reply_text(styles_text, parse_mode='Markdown')
 
 # Функция обработки текстовых сообщений
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def handle_message(update: Update, context: CallbackContext):
     try:
         query = update.message.text.lower().strip()
         
         # Проверяем, есть ли такой стиль в базе
         if query not in OUTFITS:
             available_styles = ", ".join(f"'{key}'" for key in OUTFITS.keys())
-            await update.message.reply_text(
+            update.message.reply_text(
                 f"❌ Стиль '{query}' не найден.\n\n"
                 f"📋 Доступные стили: {available_styles}\n\n"
                 "Используйте /styles чтобы увидеть полный список."
@@ -127,81 +127,59 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         outfit = OUTFITS[query]
         
         # Отправляем сообщение о начале загрузки
-        await update.message.reply_text(
+        update.message.reply_text(
             f"🔄 Загружаю аутфит для стиля '{query}'...\n"
             f"📦 Всего элементов: {len(outfit)}"
         )
 
-        # Создаем медиагруппу (максимум 10 элементов в группе - ограничение Telegram)
-        media_group = []
+        # Отправляем каждое изображение отдельно
         for item in outfit:
-            media_group.append(InputMediaPhoto(
-                media=item["url"],
-                caption=f"👕 {item['name']}\n#{(query)}"
-            ))
-            
-            # Если набралось 10 элементов, отправляем и очищаем группу
-            if len(media_group) >= 10:
-                await update.message.reply_media_group(media_group)
-                media_group = []
-                await asyncio.sleep(1)  # Небольшая задержка между группами
-        
-        # Отправляем оставшиеся элементы
-        if media_group:
-            await update.message.reply_media_group(media_group)
+            try:
+                update.message.reply_photo(
+                    photo=item["url"],
+                    caption=f"👕 {item['name']}\n#{(query)}"
+                )
+            except Exception as e:
+                print(f"Ошибка при отправке фото: {e}")
+                update.message.reply_text(
+                    f"❌ Не удалось загрузить: {item['name']}"
+                )
 
         # Финальное сообщение
-        await update.message.reply_text(
+        update.message.reply_text(
             f"✅ Аутфит для стиля '{query}' готов!\n\n"
             "Хотите посмотреть другой стиль? Просто напишите его название."
         )
 
-    except TelegramError as e:
-        await update.message.reply_text(
-            "❌ Произошла ошибка при загрузке изображений.\n"
-            "Попробуйте еще раз через несколько секунд."
-        )
-        print(f"Telegram error: {e}")
-        
     except Exception as e:
-        await update.message.reply_text(
+        update.message.reply_text(
             "⚠️ Произошла непредвиденная ошибка.\n"
             "Попробуйте еще раз или обратитесь к администратору."
         )
         print(f"Unexpected error: {e}")
 
-# Обработчик ошибок
-async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print(f"Error occurred: {context.error}")
-    if update and update.message:
-        await update.message.reply_text(
-            "⚠️ Произошла ошибка. Пожалуйста, попробуйте еще раз."
-        )
-
 # Основная функция
 def main():
     try:
-        # Создаем приложение с обработкой ошибок
-        application = Application.builder().token(TOKEN).build()
+        # Создаем Updater для старой версии библиотеки
+        updater = Updater(TOKEN, use_context=True)
+        dispatcher = updater.dispatcher
 
         # Добавляем обработчики команд
-        application.add_handler(CommandHandler("start", start))
-        application.add_handler(CommandHandler("help", help_command))
-        application.add_handler(CommandHandler("styles", list_styles))
+        dispatcher.add_handler(CommandHandler("start", start))
+        dispatcher.add_handler(CommandHandler("help", help_command))
+        dispatcher.add_handler(CommandHandler("styles", list_styles))
         
         # Добавляем обработчик текстовых сообщений
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-        
-        # Добавляем обработчик ошибок
-        application.add_error_handler(error_handler)
+        dispatcher.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
         print("🤖 Бот запускается...")
         print("📊 Доступные стили:", list(OUTFITS.keys()))
         print("✅ Бот готов к работе!")
-        print("🚀 Запущен на Render.com")
         
         # Запускаем бота
-        application.run_polling(drop_pending_updates=True)
+        updater.start_polling()
+        updater.idle()
 
     except Exception as e:
         print(f"❌ Ошибка при запуске бота: {e}")
