@@ -1,4 +1,21 @@
+# Monkey-patch для обхода проблем с imghdr и Updater
+import sys
+import os
 
+# Добавляем текущую директорию в путь Python
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# Загружаем monkey-patch для imghdr
+try:
+    from imghdr_monkeypatch import ImghdrModule
+    sys.modules['imghdr'] = ImghdrModule()
+    print("✅ Monkey-patch для imghdr применен успешно")
+except Exception as e:
+    print(f"⚠️ Ошибка применения monkey-patch: {e}")
+
+# Явно указываем использовать новую версию API
+import telegram
+telegram.__version__ = "13.15"
 
 
 import os
