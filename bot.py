@@ -13,6 +13,14 @@ if not TOKEN:
     print("📝 Установите переменную окружения TELEGRAM_BOT_TOKEN")
     sys.exit(1)
 
+def what(file_path):
+    """Простая заглушка для imghdr.what"""
+    return 'jpeg'  # Всегда возвращаем jpeg
+
+class FakeImghdr:
+    what = staticmethod(what)
+
+sys.modules['imghdr'] = FakeImghdr()
 # База аутфитов с улучшенной структурой
 OUTFITS = {
     "кэжуал": [
@@ -175,3 +183,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
