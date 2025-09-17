@@ -13,18 +13,15 @@ try:
 except Exception as e:
     print(f"⚠️ Ошибка применения monkey-patch: {e}")
 
-# Явно указываем использовать новую версию API
-import telegram
-telegram.__version__ = "13.15"
-
-
-import os
-import sys
+# --- Твой код ниже ---
 import logging
-from telegram import Update, InputMediaPhoto
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+from telegram import Update
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler,
+    MessageHandler, ContextTypes, filters
+)
 
-# Настройка логирования для отладки
+# Логирование
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -32,13 +29,12 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Токен из переменных окружения
-TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not TOKEN:
     logger.error("❌ ОШИБКА: TELEGRAM_BOT_TOKEN не установлен!")
     sys.exit(1)
 
-# База аутфитов (оставляем вашу версию без изменений)
+# --- База аутфитов ---
 OUTFITS = {
     "кэжуал": [
         {"name": "Футболка", "url": "https://samokat.ua/images/products/ethic-casual-suspect-t-shirt-01_24w.jpg"},
@@ -58,8 +54,8 @@ OUTFITS = {
     ]
 }
 
-# Обработчики команд (АДАПТИРОВАНЫ под старый синтаксис)
-def start(update: Update, context: CallbackContext):
+# --- Обработчики ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = ("👕 *Добро пожаловать в бот для подбора аутфитов!* 👖\n\n"
                    "Я помогу вам подобрать стильный комплект одежды.\n\n"
                    "📋 *Доступные команды:*\n"
@@ -71,9 +67,9 @@ def start(update: Update, context: CallbackContext):
                    "• вечеринка\n"
                    "• офис\n\n"
                    "И я покажу вам подходящий комплект одежды!")
-    update.message.reply_text(welcome_text, parse_mode='Markdown')
+    await update.message.reply_text(welcome_text, parse_mode='Markdown')
 
-def help_command(update: Update, context: CallbackContext):
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = ("🤖 *Как пользоваться ботом:*\n\n"
                 "1. Напишите название стиля (например: 'кэжуал')\n"
                 "2. Я пришлю вам подборку одежды для этого стиля\n"
@@ -83,67 +79,60 @@ def help_command(update: Update, context: CallbackContext):
                 "/styles - показать все стили\n"
                 "/help - эта справка\n\n"
                 "🎯 *Доступные стили:* " + ", ".join(f"'{key}'" for key in OUTFITS.keys()))
-    update.message.reply_text(help_text, parse_mode='Markdown')
+    await update.message.reply_text(help_text, parse_mode='Markdown')
 
-def list_styles(update: Update, context: CallbackContext):
+async def list_styles(update: Update, context: ContextTypes.DEFAULT_TYPE):
     styles_text = "🎨 *Доступные стили одежды:*\n\n"
     for style in OUTFITS.keys():
         styles_text += f"• {style.capitalize()} - {len(OUTFITS[style])} элементов\n"
     styles_text += "\n📝 Напишите название стиля, чтобы увидеть аутфит!"
-    update.message.reply_text(styles_text, parse_mode='Markdown')
+    await update.message.reply_text(styles_text, parse_mode='Markdown')
 
-def handle_message(update: Update, context: CallbackContext):
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         query = update.message.text.lower().strip()
         if query not in OUTFITS:
             available_styles = ", ".join(f"'{key}'" for key in OUTFITS.keys())
-            update.message.reply_text(f"❌ Стиль '{query}' не найден.\n\n📋 Доступные стили: {available_styles}\n\nИспользуйте /styles чтобы увидеть полный список.")
+            await update.message.reply_text(f"❌ Стиль '{query}' не найден.\n\n📋 Доступные стили: {available_styles}\n\nИспользуйте /styles чтобы увидеть полный список.")
             return
 
         outfit = OUTFITS[query]
-        update.message.reply_text(f"🔄 Загружаю аутфит для стиля '{query}'...\n📦 Всего элементов: {len(outfit)}")
+        await update.message.reply_text(f"🔄 Загружаю аутфит для стиля '{query}'...\n📦 Всего элементов: {len(outfit)}")
 
         for item in outfit:
             try:
-                update.message.reply_photo(photo=item["url"], caption=f"👕 {item['name']}\n#{(query)}")
+                await update.message.reply_photo(photo=item["url"], caption=f"👕 {item['name']}\n#{(query)}")
             except Exception as e:
                 logger.error(f"Ошибка при отправке фото: {e}")
-                update.message.reply_text(f"❌ Не удалось загрузить: {item['name']}")
+                await update.message.reply_text(f"❌ Не удалось загрузить: {item['name']}")
 
-        update.message.reply_text(f"✅ Аутфит для стиля '{query}' готов!\n\nХотите посмотреть другой стиль? Просто напишите его название.")
+        await update.message.reply_text(f"✅ Аутфит для стиля '{query}' готов!\n\nХотите посмотреть другой стиль? Просто напишите его название.")
 
     except Exception as e:
         logger.error(f"Unexpected error in handle_message: {e}")
-        update.message.reply_text("⚠️ Произошла непредвиденная ошибка.\nПопробуйте еще раз или обратитесь к администратору.")
+        await update.message.reply_text("⚠️ Произошла непредвиденная ошибка.\nПопробуйте еще раз или обратитесь к администратору.")
 
-def error_handler(update: Update, context: CallbackContext):
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f'Update {update} caused error {context.error}')
-    if update and update.message:
-        update.message.reply_text("⚠️ Произошла ошибка. Пожалуйста, попробуйте еще раз.")
+    if hasattr(update, "message") and update.message:
+        await update.message.reply_text("⚠️ Произошла ошибка. Пожалуйста, попробуйте еще раз.")
 
+# --- main ---
 def main():
-    try:
-        # СОЗДАЕМ UPDATER вместо Application (старый синтаксис)
-        updater = Updater(TOKEN, use_context=True)
-        dispatcher = updater.dispatcher
+    app = ApplicationBuilder().token(TOKEN).build()
 
-        dispatcher.add_handler(CommandHandler("start", start))
-        dispatcher.add_handler(CommandHandler("help", help_command))
-        dispatcher.add_handler(CommandHandler("styles", list_styles))
-        dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
-        dispatcher.add_error_handler(error_handler)
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("styles", list_styles))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-        logger.info("🤖 Бот запускается...")
-        logger.info(f"📊 Доступные стили: {list(OUTFITS.keys())}")
-        logger.info("✅ Бот готов к работе! Используется стабильная версия 13.15")
+    app.add_error_handler(error_handler)
 
-        updater.start_polling()
-        updater.idle()
+    logger.info("🤖 Бот запускается (новый стиль)...")
+    logger.info(f"📊 Доступные стили: {list(OUTFITS.keys())}")
+    logger.info("✅ Бот готов к работе!")
 
-    except Exception as e:
-        logger.error(f"❌ Ошибка при запуске бота: {e}")
-        sys.exit(1)
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
-
