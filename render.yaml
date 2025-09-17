@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: grok-bot
+    env: python
+    region: frankfurt
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    autoDeploy: true
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: XAI_API_KEY
+        sync: false
+      - key: RENDER_EXTERNAL_URL
+        sync: false
