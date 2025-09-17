@@ -17,7 +17,7 @@ PORT = int(os.getenv("PORT", 8443))
 APP_URL = os.getenv("RENDER_EXTERNAL_URL")  # https://your-service.onrender.com
 
 if not TELEGRAM_BOT_TOKEN or not XAI_API_KEY or not APP_URL:
-    raise RuntimeError("Set TELEGRAM_BOT_TOKEN, XAI_API_KEY, RENDER_EXTERNAL_URL")
+    raise RuntimeError("Set TELEGRAM_BOT_TOKEN, XAI_API_KEY, RENDER_EXTERNAL_URL env vars")
 
 # ========= LOGGING =========
 logging.basicConfig(level=logging.INFO)
@@ -30,14 +30,7 @@ EMOJIS = ["👕", "👖", "👟", "🧥", "🎒"]
 HTTP_TIMEOUT = 10
 CONCURRENCY = 16
 
-# Разрешённые домены (чем шире — тем проще найти товары)
-ALLOWED_WEBSITES = [
-    "zara.com", "hm.com", "bershka.com", "asos.com", "zalando.",
-    "lyst.com", "grailed.com", "nike.com", "adidas.com", "uniqlo.com",
-    "levi.com", "converse.com"
-]
-
-# Регексы для product pages по доменам
+# Регексы для product pages по доменам (можно расширять)
 PRODUCT_PATTERNS = {
     # Zara: /en/us/...-p012345.html
     "zara.com":      r"/[a-z]{2}/[a-z]{2}/.+-p\d{5,}\.html",
@@ -49,7 +42,7 @@ PRODUCT_PATTERNS = {
     "asos.com":      r"/(prd/\d+|/p/[a-z0-9-]+/\d+)",
     # Zalando: /.../article/<CODE> или /p/<CODE>
     "zalando.":      r"/.*(article|p)/[A-Z0-9]{6,}",
-    # Lyst: обычно /clothing|shoes|accessories/...<digits>/
+    # Lyst: /clothing|shoes|accessories/...<digits>/
     "lyst.com":      r"/(clothing|shoes|accessories)/.+\d{4,}/?",
     # Grailed: /listings/12345678
     "grailed.com":   r"/listings/\d+",
@@ -88,13 +81,10 @@ def looks_like_product(url: str) -> bool:
     path = requests.utils.urlparse(url).path
     if not host or not path or url.endswith("/"):
         return False
-    # разрешённые домены
-    if not any(allow in host for allow in ALLOWED_WEBSITES):
-        return False
-    # доменные регексы
     for key, rx in PRODUCT_PATTERNS.items():
         if key in host:
             return re.search(rx, path, flags=re.I) is not None
+    # если домен неизвестный — лучше не пускать
     return False
 
 # ========= HTTP utils =========
@@ -104,9 +94,8 @@ async def http_ok_html(url: str) -> bool:
     try:
         async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, follow_redirects=True) as client:
             r = await client.get(url)
-            if r.status_code == 200:
-                ctype = r.headers.get("content-type", "")
-                return "text/html" in ctype
+            if r.status_code == 200 and "text/html" in (r.headers.get("content-type", "")):
+                return True
     except Exception as e:
         logger.debug("validate fail %s -> %s", url, e)
     return False
@@ -161,24 +150,24 @@ def build_system_prompt(strict: bool = False) -> str:
         "Ты модный стилист. Подбирай строго 5 вещей: 👕 футболка, 👖 джинсы, 👟 кроссовки, 🧥 куртка, 🎒 аксессуар.\n"
         "Формат ответа: Emoji Название — ссылка (одна вещь на строку).\n\n"
         "‼️ ТОЛЬКО карточки товаров (product pages). Запрещены: статьи, обзоры, блоги, новости, категории и главные страницы.\n"
-        "Разрешённые магазины (только эти домены):\n"
-        " - Zara: zara.com\n"
-        " - H&M: hm.com\n"
-        " - Bershka: bershka.com\n"
-        " - ASOS: asos.com\n"
-        " - Zalando: любые поддомены (zalando.*)\n"
-        " - Lyst: lyst.com (только карточки товаров)\n"
-        " - Grailed: grailed.com (только listings)\n"
-        " - Nike: nike.com\n"
-        " - Adidas: adidas.com\n"
-        " - UNIQLO: uniqlo.com\n"
-        " - Levi's: levi.com\n"
-        " - Converse: converse.com\n"
+        "Допускаются домены известных магазинов (Zara, H&M, Bershka, ASOS, Zalando, Lyst, Grailed, Nike, Adidas, UNIQLO, Levi's, Converse).\n"
         "Ссылка должна содержать товарный идентификатор или слаг (например: 'productpage.123456', '-p012345', 'id=12345', '/dp/...').\n"
     )
     if strict:
         base += "СТРОГО: верни РОВНО 5 URL карточек товаров, по одному в строке, без описаний."
     return base
+
+def grok_call(payload: dict) -> dict:
+    url = "https://api.x.ai/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"}
+    r = requests.post(url, headers=headers, json=payload, timeout=60)
+    if r.status_code >= 400:
+        try:
+            logger.error("Grok 4xx/5xx: %s\nResponse: %s", r.status_code, r.text[:2000])
+        except Exception:
+            logger.error("Grok 4xx/5xx: %s (cannot decode body)", r.status_code)
+        r.raise_for_status()
+    return r.json()
 
 def ask_grok(user_text: str, strict: bool = False, max_search_results: int = 20) -> dict:
     payload = {
@@ -189,22 +178,15 @@ def ask_grok(user_text: str, strict: bool = False, max_search_results: int = 20)
         ],
         "max_tokens": 600,
         "search_parameters": {
-            "mode": "on",
+            "mode": "on",               # Live Search
             "return_citations": True,
             "max_search_results": max_search_results,
-            "sources": [{
-                "type": "web",
-                "allowed_websites": ALLOWED_WEBSITES
-            }]
+            "sources": [{"type": "web"}]  # без allowed_websites — иначе 400
         },
         "temperature": 0.12
     }
     logger.info("Grok request strict=%s", strict)
-    url = "https://api.x.ai/v1/chat/completions"
-    headers = {"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"}
-    r = requests.post(url, headers=headers, json=payload, timeout=60)
-    r.raise_for_status()
-    return r.json()
+    return grok_call(payload)
 
 # ========= Bot Handlers =========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -218,8 +200,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Я возвращаю ровно 5 product pages (футболка, джинсы, кроссовки, куртка, аксессуар) "
-        "из магазинов: Zara, H&M, Bershka, ASOS, Zalando, Lyst, Grailed, Nike, Adidas, UNIQLO, Levi's, Converse."
+        "Я верну ровно 5 product pages (футболка, джинсы, кроссовки, куртка, аксессуар) из известных магазинов. "
+        "Если нужно — уточни бренд/материал/бюджет."
     )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -261,8 +243,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     attempts, len(candidates), len(citations), len(from_text))
         logger.info("Sample: %s", candidates[:8])
 
-        to_check = candidates
-        validated = await validate_and_title_batch(to_check, need=5 - len(found))
+        validated = await validate_and_title_batch(candidates, need=5 - len(found))
         for (u, title) in validated:
             if all(u != x[0] for x in found):
                 found.append((u, title))
@@ -274,7 +255,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(found) < 5:
             await asyncio.sleep(0.6)
 
-    # если всё ещё меньше 5 — расширяем проверку на всё, что увидели (вдруг часть прошла теперь)
+    # Доп. проход по всем увиденным урлам (на случай, если часть позже открылась)
     if len(found) < 5 and tried_urls:
         more = await validate_and_title_batch(
             [u for u in tried_urls if all(u != x[0] for x in found)],
@@ -288,11 +269,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not found:
         await update.message.reply_text(
-            "😔 Похоже, магазины ограничили доступ. Уточни бренд/тип вещи (напр. 'Zara белая футболка')."
+            "😔 Похоже, магазины ограничили доступ. Попробуй уточнить бренд или стиль (напр. 'Zara белая футболка')."
         )
         return
 
-    # выводим: строка с названием + кнопка с ссылкой
+    # вывод: строка + кнопка
     lines = []
     buttons = []
     for i, (url, title) in enumerate(found[:5]):
