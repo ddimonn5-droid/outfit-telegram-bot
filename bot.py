@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import httpx
 from telegram import Update
 from telegram.ext import Application, MessageHandler, ContextTypes, filters
 from openai import OpenAI
@@ -8,8 +9,9 @@ from openai import OpenAI
 # ====== Конфиг ======
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-PORT = int(os.getenv("PORT", 8443))  # Render отдаёт PORT автоматически
-APP_URL = os.getenv("RENDER_EXTERNAL_URL")  # Render даёт URL в среде
+PORT = int(os.getenv("PORT", 8443))  # Render даёт порт
+APP_URL = os.getenv("RENDER_EXTERNAL_URL")  # например https://outfit-bot.onrender.com
+
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 logging.basicConfig(level=logging.INFO)
@@ -29,7 +31,8 @@ async def gpt_outfit_request(user_text: str):
                         "Ты модный стилист. "
                         "Отвечай строго в JSON формате: "
                         "{\"items\":[{\"name\":\"Название\",\"link\":\"https://ссылка\"}]}. "
-                        "Используй реальные онлайн-магазины: Zara, Lyst, Grailed, Bershka. ТАКЖЕ ПОЖАЛУЙСТА УБЕДИСЬ В ТОМ ЧТО ССЫЛКИ РАБОЧИЕ И ХОРОШО ДУМАЙ ГОЛОВОЙ"
+                        "Используй только реальные ссылки из Zara, Lyst, Grailed, Bershka. "
+                        "Не выдумывай ссылки. Если не уверен — пропусти предмет."
                     )
                 },
                 {"role": "user", "content": f"Подбери аутфит: {user_text}"}
@@ -45,15 +48,34 @@ async def gpt_outfit_request(user_text: str):
         return []
 
 
+# ====== Валидация ссылок ======
+async def validate_links(items):
+    """Проверяет ссылки (возвращает только рабочие)"""
+    valid_items = []
+    async with httpx.AsyncClient(timeout=10) as client:
+        for it in items:
+            url = it.get("link", "")
+            if not url.startswith("http"):
+                continue
+            try:
+                r = await client.head(url, follow_redirects=True)
+                if r.status_code == 200:
+                    valid_items.append(it)
+            except Exception:
+                continue
+    return valid_items
+
+
 # ====== Handler сообщений ======
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
     await update.message.reply_text("✨ Думаю над твоим аутфитом...")
 
     items = await gpt_outfit_request(user_text)
+    items = await validate_links(items)  # фильтруем битые ссылки
 
     if not items:
-        await update.message.reply_text("😢 Я не смог подобрать аутфит. Попробуй описать стиль по-другому.")
+        await update.message.reply_text("😢 Не удалось найти рабочие ссылки для этого стиля.")
         return
 
     reply_lines = [f"👗 {it.get('name','Без названия')} → {it.get('link','')}" for it in items]
@@ -87,4 +109,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
