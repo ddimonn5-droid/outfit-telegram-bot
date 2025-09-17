@@ -6,7 +6,8 @@ import logging
 import asyncio
 import httpx
 import requests
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict
+from urllib.parse import quote_plus
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
@@ -14,7 +15,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, ContextTyp
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 XAI_API_KEY = os.getenv("XAI_API_KEY")
 PORT = int(os.getenv("PORT", 8443))
-APP_URL = os.getenv("RENDER_EXTERNAL_URL")  # https://your-service.onrender.com
+APP_URL = os.getenv("RENDER_EXTERNAL_URL")
 
 if not TELEGRAM_BOT_TOKEN or not XAI_API_KEY or not APP_URL:
     raise RuntimeError("Set TELEGRAM_BOT_TOKEN, XAI_API_KEY, RENDER_EXTERNAL_URL env vars")
@@ -30,33 +31,47 @@ EMOJIS = ["👕", "👖", "👟", "🧥", "🎒"]
 HTTP_TIMEOUT = 10
 CONCURRENCY = 16
 
-# Регексы для product pages по доменам (можно расширять)
+# Доменные регексы product pages
 PRODUCT_PATTERNS = {
-    # Zara: /en/us/...-p012345.html
     "zara.com":      r"/[a-z]{2}/[a-z]{2}/.+-p\d{5,}\.html",
-    # H&M: /productpage.123456.html
     "hm.com":        r"/productpage\.\d+\.html",
-    # Bershka: /ru/ru/...-c123456/p/123456789.html
     "bershka.com":   r"/[a-z]{2}/[a-z]{2}/[a-z-]+-c\d+/p/\d+\.html",
-    # ASOS: /prd/12345678 или /p/<slug>/12345678
     "asos.com":      r"/(prd/\d+|/p/[a-z0-9-]+/\d+)",
-    # Zalando: /.../article/<CODE> или /p/<CODE>
     "zalando.":      r"/.*(article|p)/[A-Z0-9]{6,}",
-    # Lyst: /clothing|shoes|accessories/...<digits>/
     "lyst.com":      r"/(clothing|shoes|accessories)/.+\d{4,}/?",
-    # Grailed: /listings/12345678
     "grailed.com":   r"/listings/\d+",
-    # Nike product: /t/<slug>-<code>  или /launch/t/<slug>
     "nike.com":      r"/(launch/)?t/[a-z0-9-]+",
-    # Adidas: /en/us/.../<CODE>.html
     "adidas.com":    r"/[a-z]{2}/[a-z]{2}/.+/[A-Z0-9]{6,}\.html",
-    # UNIQLO: /products/<slug>  или /product/<slug>
     "uniqlo.com":    r"/products?/[a-z0-9-]+",
-    # Levi's: /p/<CODE>  или /product/<slug>
     "levi.com":      r"/(p|product)/[A-Za-z0-9\-]{5,}",
-    # Converse: /shop/p/<slug>  или /p/<slug>
     "converse.com":  r"/(shop/)?p/[a-z0-9-]+",
 }
+
+SEARCH_ENDPOINTS: Dict[str, str] = {
+    # простые поисковые URL; мы потом отфильтруем найденные product-ссылки регексами сверху
+    "zara.com":     "https://www.zara.com/ww/en/search?searchTerm={q}",
+    "hm.com":       "https://www2.hm.com/en_us/search-results.html?q={q}",
+    "bershka.com":  "https://www.bershka.com/ww/search?q={q}",
+    "asos.com":     "https://www.asos.com/search/?q={q}",
+    "zalando.com":  "https://www.zalando.com/catalog/?q={q}",
+    "nike.com":     "https://www.nike.com/w?q={q}",
+    "adidas.com":   "https://www.adidas.com/us/search?q={q}",
+    "uniqlo.com":   "https://www.uniqlo.com/us/en/search/?q={q}",
+    "levi.com":     "https://www.levi.com/US/en_US/search/{q}",
+    "converse.com": "https://www.converse.com/search?q={q}",
+    # аггрегаторы можно оставить на потом, но регексы у нас есть на lyst/grailed
+    "lyst.com":     "https://www.lyst.com/search/?q={q}",
+    "grailed.com":  "https://www.grailed.com/shop?q={q}",
+}
+
+# Карта слотов -> поисковый запрос
+ITEM_QUERIES = [
+    ("👕", "футболка", ["t shirt", "tee", "tshirt"]),
+    ("👖", "джинсы",   ["jeans", "denim jeans"]),
+    ("👟", "кроссовки",["sneakers", "trainers"]),
+    ("🧥", "куртка",   ["jacket"]),
+    ("🎒", "аксессуар",["backpack", "belt", "cap"]),
+]
 
 def domain_of(url: str) -> str:
     try:
@@ -84,7 +99,6 @@ def looks_like_product(url: str) -> bool:
     for key, rx in PRODUCT_PATTERNS.items():
         if key in host:
             return re.search(rx, path, flags=re.I) is not None
-    # если домен неизвестный — лучше не пускать
     return False
 
 # ========= HTTP utils =========
@@ -94,11 +108,10 @@ async def http_ok_html(url: str) -> bool:
     try:
         async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, follow_redirects=True) as client:
             r = await client.get(url)
-            if r.status_code == 200 and "text/html" in (r.headers.get("content-type", "")):
-                return True
+            return r.status_code == 200 and "text/html" in (r.headers.get("content-type", ""))
     except Exception as e:
         logger.debug("validate fail %s -> %s", url, e)
-    return False
+        return False
 
 async def fetch_title(url: str) -> Optional[str]:
     try:
@@ -178,15 +191,86 @@ def ask_grok(user_text: str, strict: bool = False, max_search_results: int = 20)
         ],
         "max_tokens": 600,
         "search_parameters": {
-            "mode": "on",               # Live Search
+            "mode": "on",
             "return_citations": True,
             "max_search_results": max_search_results,
-            "sources": [{"type": "web"}]  # без allowed_websites — иначе 400
+            "sources": [{"type": "web"}]  # без allowed_websites, иначе 400
         },
         "temperature": 0.12
     }
     logger.info("Grok request strict=%s", strict)
     return grok_call(payload)
+
+# ========= Fallback Site Search (без Grok) =========
+async def site_search_first_product(site: str, query: str) -> Optional[str]:
+    """Открываем поисковую страницу магазина и вытаскиваем первую product-ссылку по нашему доменному регексу."""
+    base = SEARCH_ENDPOINTS[site]
+    url = base.format(q=quote_plus(query))
+    try:
+        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, follow_redirects=True) as client:
+            r = await client.get(url)
+            if r.status_code != 200:
+                return None
+            html_text = r.text
+            # достанем все URL этого домена
+            host = site
+            # общий жадный сбор ссылок этого домена
+            urls = re.findall(rf"https?://[^\s\"']*{re.escape(host)}/[^\s\"']+", html_text, flags=re.I)
+            # прогон по looks_like_product
+            for u in urls:
+                cu = clean_url(u)
+                if looks_like_product(cu):
+                    ok = await http_ok_html(cu)
+                    if ok:
+                        return cu
+    except Exception as e:
+        logger.debug("site_search_first_product fail %s -> %s", site, e)
+    return None
+
+async def guaranteed_find_products(user_text: str) -> List[Tuple[str, Optional[str]]]:
+    """
+    Фолбэк, который гарантированно пытается найти 5 карточек:
+    Для каждой позиции (👕, 👖, 👟, 🧥, 🎒) пробегаем по магазинам и берём первый найденный product-URL.
+    """
+    items = ITEM_QUERIES  # фикс: 5 слотов
+    sites_priority = [
+        "zara.com", "hm.com", "bershka.com", "asos.com",
+        "zalando.com", "nike.com", "adidas.com", "uniqlo.com",
+        "levi.com", "converse.com", "lyst.com", "grailed.com"
+    ]
+    results: List[Tuple[str, Optional[str]]] = []
+
+    for emoji, ru_name, queries in items:
+        found_url: Optional[str] = None
+        # склеим запрос: что попросил юзер + название категории
+        q_variants = [f"{user_text} {ru_name}"] + queries
+        for q in q_variants:
+            for site in sites_priority:
+                url = await site_search_first_product(site, q)
+                if url:
+                    title = await fetch_title(url)
+                    results.append((url, title))
+                    found_url = url
+                    break
+            if found_url:
+                break
+        if not found_url:
+            # если даже так не нашли — оставим слот пустым, позже попробуем добрать из общих попыток
+            logger.warning("Fallback search: not found for slot %s (%s)", emoji, ru_name)
+
+    # если где-то пусто — попробуем добрать из любых найденных по всем сайтам на общую строку запроса
+    if len(results) < 5:
+        extra_needed = 5 - len(results)
+        pool = []
+        for site in sites_priority:
+            u = await site_search_first_product(site, user_text)
+            if u:
+                pool.append(u)
+        # валидируем и берём недостающее
+        validated = await validate_and_title_batch(pool, need=extra_needed)
+        results.extend(validated)
+
+    return results[:5]
 
 # ========= Bot Handlers =========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -194,14 +278,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
           [InlineKeyboardButton("Помощь", callback_data="help")]]
     await update.message.reply_text(
         "👋 Привет! Напиши стиль (например: «уличный спорт», «офис летом», «вечеринка 90-х»), "
-        "и я подберу 5 реальных товарных страниц.",
+        "и я подберу 5 реальных карточек товаров.",
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Я верну ровно 5 product pages (футболка, джинсы, кроссовки, куртка, аксессуар) из известных магазинов. "
-        "Если нужно — уточни бренд/материал/бюджет."
+        "Я верну ровно 5 product pages (футболка, джинсы, кроссовки, куртка, аксессуар) "
+        "из известных магазинов. Можно уточнить бренд/бюджет/материал."
     )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -212,18 +296,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("🔎 Ищу товарные страницы...")
 
+    # 1) Пытаемся через Grok (несколько попыток)
     found: List[Tuple[str, Optional[str]]] = []
     attempts = 0
     tried_urls: List[str] = []
 
-    # До 5 попыток: 1 обычная + 4 строгих (только URL)
     while len(found) < 5 and attempts < 5:
         strict = attempts >= 1
         try:
             raw = ask_grok(user_text, strict=strict, max_search_results=25 if strict else 15)
         except Exception:
             logger.exception("Grok error")
-            await asyncio.sleep(0.6)
+            await asyncio.sleep(0.5)
             attempts += 1
             continue
 
@@ -253,27 +337,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tried_urls.extend(candidates)
         attempts += 1
         if len(found) < 5:
-            await asyncio.sleep(0.6)
+            await asyncio.sleep(0.4)
 
-    # Доп. проход по всем увиденным урлам (на случай, если часть позже открылась)
-    if len(found) < 5 and tried_urls:
-        more = await validate_and_title_batch(
-            [u for u in tried_urls if all(u != x[0] for x in found)],
-            need=5 - len(found)
-        )
+    # 2) Если Grok не добил до 5 — включаем гарантированный оффлайн-фолбэк по сайтам
+    if len(found) < 5:
+        need = 5 - len(found)
+        logger.info("FALLBACK site search enabled (need %s)", need)
+        more = await guaranteed_find_products(user_text)
+        # привинтим то, чего не хватает, избегая дублей
         for (u, title) in more:
             if all(u != x[0] for x in found):
                 found.append((u, title))
                 if len(found) >= 5:
                     break
 
+    # 3) Если вообще пусто (почти нереально с фолбэком) — мягко сообщим
     if not found:
         await update.message.reply_text(
-            "😔 Похоже, магазины ограничили доступ. Попробуй уточнить бренд или стиль (напр. 'Zara белая футболка')."
+            "😔 Не смог найти открываемые карточки товаров. Уточни бренд/модель (например: 'Zara белая футболка, slim fit')."
         )
         return
 
-    # вывод: строка + кнопка
+    # 4) Красивый вывод: строка с title и кнопка-ссылка
     lines = []
     buttons = []
     for i, (url, title) in enumerate(found[:5]):
@@ -284,7 +369,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append(f"{emoji} {label}\n{url}")
         buttons.append([InlineKeyboardButton(f"{emoji} Открыть", url=url)])
 
-    text = "Вот твой аутфит (реальные товарные страницы):\n\n" + "\n\n".join(lines)
+    text = "Вот твой аутфит (реальные product pages):\n\n" + "\n\n".join(lines)
     await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons), disable_web_page_preview=True)
 
 # ========= MAIN =========
