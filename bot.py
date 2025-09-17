@@ -8,6 +8,8 @@ from openai import OpenAI
 # ====== Конфиг ======
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+PORT = int(os.getenv("PORT", 8443))  # Render отдаёт PORT автоматически
+APP_URL = os.getenv("RENDER_EXTERNAL_URL")  # Render даёт URL в среде
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 logging.basicConfig(level=logging.INFO)
@@ -27,7 +29,7 @@ async def gpt_outfit_request(user_text: str):
                         "Ты модный стилист. "
                         "Отвечай строго в JSON формате: "
                         "{\"items\":[{\"name\":\"Название\",\"link\":\"https://ссылка\"}]}. "
-                        "Используй реальные онлайн-магазины: ASOS, Zara, H&M, Farfetch."
+                        "Используй реальные онлайн-магазины: Zara, Lyst, Grailed, Bershka"
                     )
                 },
                 {"role": "user", "content": f"Подбери аутфит: {user_text}"}
@@ -54,7 +56,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("😢 Я не смог подобрать аутфит. Попробуй описать стиль по-другому.")
         return
 
-    # Красивое оформление ответа
     reply_lines = [f"👗 {it.get('name','Без названия')} → {it.get('link','')}" for it in items]
     reply_text = "Вот что я подобрал:\n\n" + "\n".join(reply_lines)
     await update.message.reply_text(reply_text)
@@ -67,25 +68,21 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text("⚠️ Ой, что-то пошло не так. Попробуй ещё раз.")
 
 
-# ====== Post init (чистим webhook) ======
-async def post_init(application: Application):
-    try:
-        await application.bot.delete_webhook(drop_pending_updates=True)
-        logger.info("Webhook удалён. Переходим на polling.")
-    except Exception as e:
-        logger.warning(f"Не удалось удалить webhook: {e}")
-
-
 # ====== Main ======
 def main():
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-    app.post_init = post_init
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(error_handler)
 
-    logger.info("Бот запущен...")
-    app.run_polling(drop_pending_updates=True)
+    logger.info("Бот запущен в режиме Webhook...")
+
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        url_path=TELEGRAM_BOT_TOKEN,
+        webhook_url=f"{APP_URL}/{TELEGRAM_BOT_TOKEN}"
+    )
 
 
 if __name__ == "__main__":
