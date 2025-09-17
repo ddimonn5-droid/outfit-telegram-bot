@@ -3,17 +3,15 @@ import re
 import random
 import logging
 import httpx
+import requests
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
-from openai import OpenAI
 
 # ====== Конфиг ======
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+XAI_API_KEY = os.getenv("XAI_API_KEY")
 PORT = int(os.getenv("PORT", 8443))
 APP_URL = os.getenv("RENDER_EXTERNAL_URL")
-
-client = OpenAI(api_key=OPENAI_API_KEY)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -27,32 +25,47 @@ FALLBACK_OUTFITS = [
     "🎒 Рюкзак — https://i.imgur.com/Zk4N1qH.jpg",
 ]
 
-
-# ====== GPT ======
-async def gpt_outfit_request(user_text: str) -> str:
-    """Запрос к GPT, возвращает сырой текст"""
+# ====== Grok ======
+async def grok_outfit_request(user_text: str) -> str:
+    """Запрос к Grok, возвращает сырой текст со ссылками"""
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
+        url = "https://api.x.ai/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {XAI_API_KEY}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": "grok-4",
+            "messages": [
                 {
                     "role": "system",
                     "content": (
                         "Ты модный стилист. "
                         "Отвечай списком из ровно 5 пунктов: Название вещи — ссылка. "
                         "Используй реальные онлайн-магазины Zara, Lyst, Grailed, Bershka. "
-                        "ВСЕГДА придумывай ссылку, даже если не уверен."
-                    )
+                        "ЕСЛИ не уверен — всё равно придумай ссылку."
+                    ),
                 },
-                {"role": "user", "content": f"Подбери аутфит: {user_text}"}
+                {"role": "user", "content": f"Подбери аутфит: {user_text}"},
             ],
-            max_tokens=600,
-        )
-        return response.choices[0].message.content.strip()
+            "max_tokens": 600,
+            "search_parameters": {
+                "mode": "on",               # всегда включён Live Search
+                "return_citations": True,
+                "max_search_results": 8,
+                "sources": [{"type": "web"}, {"type": "news"}],
+            },
+        }
+        r = requests.post(url, headers=headers, json=payload, timeout=60)
+        r.raise_for_status()
+        j = r.json()
+        choice = (j.get("choices") or [{}])[0]
+        msg = choice.get("message", {})
+        text = msg.get("content") or choice.get("text") or ""
+        return text.strip()
     except Exception as e:
-        logger.error(f"Ошибка GPT: {e}")
+        logger.error(f"Ошибка Grok: {e}")
         return ""
-
 
 # ====== Валидация ссылок ======
 async def validate_text_links(text: str) -> list[str]:
@@ -76,20 +89,18 @@ async def validate_text_links(text: str) -> list[str]:
 
     return clean_lines
 
-
 # ====== Команда /start ======
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("Пример: кэжуал", callback_data="casual")],
-        [InlineKeyboardButton("Помощь", callback_data="help")]
+        [InlineKeyboardButton("Помощь", callback_data="help")],
     ]
     await update.message.reply_text(
-        "👋 Привет! Я бот-стилист.\n\n"
+        "👋 Привет! Я бот-стилист (теперь на Grok).\n\n"
         "Напиши, в каком стиле нужен аутфит (например: «уличный спорт», «офис летом», «вечеринка в стиле 90-х»).\n"
         "Я подберу тебе варианты из онлайн-магазинов.",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        reply_markup=InlineKeyboardMarkup(keyboard),
     )
-
 
 # ====== Команда /help ======
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -104,14 +115,13 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "3. Если часть ссылок окажется нерабочей — я дополню их базовыми рабочими ссылками."
     )
 
-
 # ====== Handler сообщений ======
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
-    await update.message.reply_text("✨ Думаю над твоим образом...")
+    await update.message.reply_text("✨ Думаю над твоим образом (через Grok)...")
 
-    gpt_result = await gpt_outfit_request(user_text)
-    valid_lines = await validate_text_links(gpt_result)
+    grok_result = await grok_outfit_request(user_text)
+    valid_lines = await validate_text_links(grok_result)
 
     # добиваем до 5 пунктов fallback'ом
     while len(valid_lines) < 5:
@@ -119,7 +129,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     reply_text = "Вот что я подобрал:\n\n" + "\n".join(valid_lines[:5])
     await update.message.reply_text(reply_text)
-
 
 # ====== Main ======
 def main():
@@ -134,9 +143,8 @@ def main():
         listen="0.0.0.0",
         port=PORT,
         url_path=TELEGRAM_BOT_TOKEN,
-        webhook_url=f"{APP_URL}/{TELEGRAM_BOT_TOKEN}"
+        webhook_url=f"{APP_URL}/{TELEGRAM_BOT_TOKEN}",
     )
-
 
 if __name__ == "__main__":
     main()
