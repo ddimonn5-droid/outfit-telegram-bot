@@ -23,6 +23,8 @@ FALLBACK_OUTFITS = [
     "👕 Белая футболка — https://i.imgur.com/Qr71crq.jpg",
     "👖 Синие джинсы — https://i.imgur.com/0rVeh4A.jpg",
     "👟 Кеды Converse — https://i.imgur.com/XxxnmUi.jpg",
+    "🧥 Чёрная куртка — https://i.imgur.com/zR5yRZr.jpg",
+    "🎒 Рюкзак — https://i.imgur.com/Zk4N1qH.jpg",
 ]
 
 
@@ -37,15 +39,14 @@ async def gpt_outfit_request(user_text: str) -> str:
                     "role": "system",
                     "content": (
                         "Ты модный стилист. "
-                        "Отвечай простым списком: Название вещи — ссылка. "
-                        "Используй реальные магазины Zara, Lyst, Grailed, Bershka. "
-                        "Не придумывай несуществующие ссылки. "
-                        "Если не можешь найти ссылку, лучше опусти вещь."
+                        "Отвечай списком из ровно 5 пунктов: Название вещи — ссылка. "
+                        "Используй реальные онлайн-магазины Zara, Lyst, Grailed, Bershka. "
+                        "ВСЕГДА придумывай ссылку, даже если не уверен."
                     )
                 },
                 {"role": "user", "content": f"Подбери аутфит: {user_text}"}
             ],
-            max_tokens=500,
+            max_tokens=600,
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
@@ -54,8 +55,8 @@ async def gpt_outfit_request(user_text: str) -> str:
 
 
 # ====== Валидация ссылок ======
-async def validate_text_links(text: str) -> str:
-    """Проверяет ссылки внутри текста и оставляет только рабочие"""
+async def validate_text_links(text: str) -> list[str]:
+    """Возвращает список строк с рабочими ссылками"""
     urls = re.findall(r"(https?://\S+)", text)
     valid_urls = set()
     async with httpx.AsyncClient(timeout=10) as client:
@@ -67,13 +68,13 @@ async def validate_text_links(text: str) -> str:
             except Exception:
                 continue
 
-    # Заменяем текст, оставляем только рабочие ссылки
     lines = text.splitlines()
     clean_lines = []
     for line in lines:
         if any(url in line for url in valid_urls):
             clean_lines.append(line)
-    return "\n".join(clean_lines)
+
+    return clean_lines
 
 
 # ====== Команда /start ======
@@ -100,7 +101,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "   • «офисный стиль летом»\n"
         "   • «вечеринка в стиле 90-х»\n\n"
         "2. Я верну список вещей со ссылками.\n"
-        "3. Если ничего не нашлось, покажу базовый аутфит."
+        "3. Если часть ссылок окажется нерабочей — я дополню их базовыми рабочими ссылками."
     )
 
 
@@ -110,14 +111,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✨ Думаю над твоим образом...")
 
     gpt_result = await gpt_outfit_request(user_text)
-    validated = await validate_text_links(gpt_result)
+    valid_lines = await validate_text_links(gpt_result)
 
-    if not validated.strip():
-        # fallback
-        reply_text = "⚠️ Не удалось найти рабочие ссылки.\nВот базовый набор:\n\n" + "\n".join(FALLBACK_OUTFITS)
-    else:
-        reply_text = "Вот что я подобрал:\n\n" + validated
+    # добиваем до 5 пунктов fallback'ом
+    while len(valid_lines) < 5:
+        valid_lines.append(random.choice(FALLBACK_OUTFITS))
 
+    reply_text = "Вот что я подобрал:\n\n" + "\n".join(valid_lines[:5])
     await update.message.reply_text(reply_text)
 
 
