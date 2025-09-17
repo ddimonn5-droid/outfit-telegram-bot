@@ -1,8 +1,8 @@
-python-telegram-bot[webhooks]==22.4
-openai>=1.0.0
-fastapi==0.112.2
-uvicorn==0.30.6
+python-telegram-bot==20.7
+httpx==0.27.2
 requests==2.32.3
+
+
 
 
 
