@@ -1,0 +1,13 @@
+{
+  "casual": [
+    {"name": "Белая футболка", "link": "https://example.com/tshirt.jpg"},
+    {"name": "Джинсы прямые", "link": "https://example.com/jeans.jpg"}
+  ],
+  "party": [
+    {"name": "Блестящее платье", "link": "https://example.com/dress.jpg"}
+  ],
+  "office": [
+    {"name": "Сорочка белая", "link": "https://example.com/shirt.jpg"},
+    {"name": "Классические брюки", "link": "https://example.com/trousers.jpg"}
+  ]
+}
