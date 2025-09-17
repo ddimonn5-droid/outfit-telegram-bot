@@ -29,7 +29,7 @@ async def gpt_outfit_request(user_text: str):
                         "Ты модный стилист. "
                         "Отвечай строго в JSON формате: "
                         "{\"items\":[{\"name\":\"Название\",\"link\":\"https://ссылка\"}]}. "
-                        "Используй реальные онлайн-магазины: Zara, Lyst, Grailed, Bershka"
+                        "Используй реальные онлайн-магазины: Zara, Lyst, Grailed, Bershka. ТАКЖЕ ПОЖАЛУЙСТА УБЕДИСЬ В ТОМ ЧТО ССЫЛКИ РАБОЧИЕ И ХОРОШО ДУМАЙ ГОЛОВОЙ"
                     )
                 },
                 {"role": "user", "content": f"Подбери аутфит: {user_text}"}
@@ -87,3 +87,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
