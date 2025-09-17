@@ -1,14 +1,14 @@
 {
   "casual": [
-    {"name": "Белая футболка", "link": "https://example.com/tshirt.jpg"},
-    {"name": "Джинсы прямые", "link": "https://example.com/jeans.jpg"}
+    {"name": "Белая футболка", "link": "https://i.imgur.com/1ZQZ1Zm.jpg"},
+    {"name": "Синие джинсы", "link": "https://i.imgur.com/VjvJ0R7.jpg"}
   ],
   "party": [
-    {"name": "Блестящее платье", "link": "https://example.com/dress.jpg"}
+    {"name": "Красное платье", "link": "https://i.imgur.com/zY6Xj0H.jpg"}
   ],
   "office": [
-    {"name": "Сорочка белая", "link": "https://example.com/shirt.jpg"},
-    {"name": "Классические брюки", "link": "https://example.com/trousers.jpg"}
+    {"name": "Белая рубашка", "link": "https://i.imgur.com/tGbaZCY.jpg"},
+    {"name": "Классические брюки", "link": "https://i.imgur.com/JqmdzCw.jpg"}
   ]
 }
 
