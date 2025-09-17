@@ -27,7 +27,7 @@ FALLBACK_OUTFITS = [
 
 # ====== Grok ======
 async def grok_outfit_request(user_text: str) -> str:
-    """Запрос к Grok, возвращает сырой текст со ссылками"""
+    """Запрос к Grok API"""
     try:
         url = "https://api.x.ai/v1/chat/completions"
         headers = {
@@ -50,7 +50,7 @@ async def grok_outfit_request(user_text: str) -> str:
             ],
             "max_tokens": 600,
             "search_parameters": {
-                "mode": "on",               # всегда включён Live Search
+                "mode": "on",
                 "return_citations": True,
                 "max_search_results": 8,
                 "sources": [{"type": "web"}, {"type": "news"}],
@@ -67,10 +67,13 @@ async def grok_outfit_request(user_text: str) -> str:
         logger.error(f"Ошибка Grok: {e}")
         return ""
 
-# ====== Валидация ссылок ======
+# ====== Утилиты ======
+def extract_urls(text: str):
+    return re.findall(r"(https?://\S+)", text or "")
+
 async def validate_text_links(text: str) -> list[str]:
-    """Возвращает список строк с рабочими ссылками"""
-    urls = re.findall(r"(https?://\S+)", text)
+    """Проверяет ссылки HEAD-запросами"""
+    urls = extract_urls(text)
     valid_urls = set()
     async with httpx.AsyncClient(timeout=10) as client:
         for url in urls:
@@ -96,9 +99,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("Помощь", callback_data="help")],
     ]
     await update.message.reply_text(
-        "👋 Привет! Я бот-стилист (теперь на Grok).\n\n"
-        "Напиши, в каком стиле нужен аутфит (например: «уличный спорт», «офис летом», «вечеринка в стиле 90-х»).\n"
-        "Я подберу тебе варианты из онлайн-магазинов.",
+        "👋 Привет! Я бот-стилист (на Grok).\n\n"
+        "Напиши стиль (например: «уличный спорт», «офис летом», «вечеринка в стиле 90-х»), "
+        "и я подберу тебе аутфит.",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
@@ -106,13 +109,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "ℹ️ Как пользоваться:\n\n"
-        "1. Просто напиши стиль или ситуацию.\n"
-        "   Примеры:\n"
-        "   • «casual на каждый день»\n"
-        "   • «офисный стиль летом»\n"
-        "   • «вечеринка в стиле 90-х»\n\n"
+        "1. Напиши стиль или ситуацию.\n"
         "2. Я верну список вещей со ссылками.\n"
-        "3. Если часть ссылок окажется нерабочей — я дополню их базовыми рабочими ссылками."
+        "3. Если ссылки нерабочие — добавлю запасные."
     )
 
 # ====== Handler сообщений ======
