@@ -67,11 +67,20 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text("⚠️ Ой, что-то пошло не так. Попробуй ещё раз.")
 
 
+# ====== Post init (чистим webhook) ======
+async def post_init(application: Application):
+    try:
+        await application.bot.delete_webhook(drop_pending_updates=True)
+        logger.info("Webhook удалён. Переходим на polling.")
+    except Exception as e:
+        logger.warning(f"Не удалось удалить webhook: {e}")
+
+
 # ====== Main ======
 def main():
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-    # Ловим все текстовые сообщения (кроме команд)
+    app.post_init = post_init
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(error_handler)
 
